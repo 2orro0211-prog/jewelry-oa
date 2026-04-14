@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>产品主表 - 珠宝OA</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-page="products">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">珠宝 OA</div>
+        <div class="menu-title">菜单管理</div>
+        <div id="dynamicMenu"></div>
+        <div class="menu-title">当前用户</div>
+        <div id="currentUser" class="menu-item" style="background:#1f2937"></div>
+        <button id="btnLogout" class="menu-item" style="width:calc(100% - 8px);text-align:left;">退出登录</button>
+      </aside>
+
+      <main class="main">
+        <header class="hero">
+          <h1>产品主表管理</h1>
+          <p>支持分页、范围筛选、弹窗新增编辑、图片放大预览。</p>
+        </header>
+
+        <section class="panel">
+          <h2>筛选查询</h2>
+          <div class="grid-4">
+            <input id="fKeyword" placeholder="产品编号模糊查询" />
+            <textarea id="fOrderNos" rows="3" placeholder="按单号查询（多单号：每行一个）"></textarea>
+            <input id="fTag" placeholder="标签查询" />
+            <div></div>
+            <select id="fProductType"><option value="">产品类型（全部）</option></select>
+            <select id="fFactory"><option value="">工厂编号（全部）</option></select>
+          </div>
+          <div class="row mt8">
+            <div class="range-item"><span class="range-label">重量</span><input id="fWeightMin" type="number" step="0.01" /><span>-</span><input id="fWeightMax" type="number" step="0.01" /></div>
+            <div class="range-item"><span class="range-label">细石数</span><input id="fSmallStoneMin" type="number" /><span>-</span><input id="fSmallStoneMax" type="number" /></div>
+            <div class="range-item"><span class="range-label">成本工费</span><input id="fLaborMin" type="number" step="0.01" /><span>-</span><input id="fLaborMax" type="number" step="0.01" /></div>
+          </div>
+          <div class="row mt8">
+            <button id="btnSearch">查询</button>
+            <button id="btnReset" class="btn-secondary">重置</button>
+            <button id="btnAdd">新增产品</button>
+            <span class="hint">每页</span>
+            <select id="pageSizeSelect"><option value="15">15</option><option value="30">30</option><option value="50">50</option><option value="100">100</option></select>
+            <span class="hint">条</span>
+            <span id="summary" class="hint"></span>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>查询结果</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>图片</th><th>产品编号</th><th>产品类型</th><th>工厂编号</th>
+                  <th>重量</th><th>细石数</th><th>异形石数</th><th>主石数</th>
+                  <th>主石价格</th><th>胚价</th><th>电镀费</th><th>成本工费</th>
+                  <th>电镀颜色</th><th>单号</th><th>标签</th><th>备注</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+          <div class="row mt8">
+            <button id="btnPrev" class="btn-secondary">上一页</button>
+            <div id="pageTabs" class="tabs"></div>
+            <button id="btnNext" class="btn-secondary">下一页</button>
+            <span id="pageInfo" class="hint"></span>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="modalMask" class="modal-mask hidden">
+      <div class="modal">
+        <div class="modal-header">
+          <h3 id="modalTitle">新增产品</h3>
+          <button id="btnCloseModal" class="btn-secondary">关闭</button>
+        </div>
+        <input type="hidden" id="pId" />
+        <div class="grid-4">
+          <input id="pCode" placeholder="产品编号*" />
+          <select id="pType"><option value="">产品类型</option></select>
+          <select id="pFactory"><option value="">工厂编号</option></select>
+          <input id="pWeight" type="number" step="0.01" placeholder="重量" />
+          <input id="pSmallStone" type="number" placeholder="细石数" />
+          <input id="pOddStone" type="number" placeholder="异形石数" />
+          <input id="pMainStone" type="number" placeholder="主石数" />
+          <input id="pMainStonePrice" type="number" step="0.01" placeholder="主石价格" />
+          <input id="pBlankPrice" type="number" step="0.01" placeholder="胚价" />
+          <input id="pPlatingFee" type="number" step="0.01" placeholder="电镀费" />
+          <input id="pLaborCost" type="number" step="0.01" placeholder="成本工费" />
+          <input id="pPlatingColor" placeholder="电镀颜色" />
+          <textarea id="pOrderNos" rows="3" placeholder="单号（每行一个）"></textarea>
+          <input id="pTags" placeholder="标签（逗号分隔）" />
+          <input id="pRemark" placeholder="备注" />
+        </div>
+        <div class="row mt8">
+          <button id="btnSave">保存</button>
+          <button id="btnNew" class="btn-secondary">清空</button>
+          <span id="formMsg" class="hint"></span>
+        </div>
+      </div>
+    </div>
+
+    <script src="/common.js"></script>
+    <script src="/nav.js"></script>
+    <script src="/products.js"></script>
+  </body>
+</html>

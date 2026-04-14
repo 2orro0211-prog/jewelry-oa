@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>菜单管理 - 珠宝OA</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-page="menus">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">珠宝 OA</div><div class="menu-title">菜单管理</div><div id="dynamicMenu"></div>
+        <div class="menu-title">当前用户</div><div id="currentUser" class="menu-item" style="background:#1f2937"></div>
+        <button id="btnLogout" class="menu-item" style="width:calc(100% - 8px);text-align:left;">退出登录</button>
+      </aside>
+      <main class="main">
+        <header class="hero"><h1>菜单管理</h1><p>可配置系统左侧菜单项。</p></header>
+        <section class="panel">
+          <input id="mId" type="hidden" />
+          <div class="grid-4">
+            <input id="mKey" placeholder="菜单键（唯一）" />
+            <input id="mName" placeholder="菜单名称" />
+            <input id="mPath" placeholder="路径（如 /products.html）" />
+            <input id="mGroup" placeholder="分组（如 业务功能 / 系统管理）" />
+            <input id="mSort" type="number" placeholder="排序号" value="100" />
+            <select id="mEnabled"><option value="1">启用</option><option value="0">禁用</option></select>
+          </div>
+          <div class="row mt8"><button id="btnSaveMenu">保存</button><button id="btnResetMenu" class="btn-secondary">清空</button><button id="btnSaveReorder" class="btn-secondary">保存拖拽顺序</button><span id="mMsg" class="hint"></span></div>
+        </section>
+        <section class="panel">
+          <div class="hint">拖拽排序：在同一分组内拖动行调整顺序，然后点击“保存拖拽顺序”。</div>
+          <div class="table-wrap"><table><thead><tr><th>拖拽</th><th>ID</th><th>分组</th><th>键</th><th>名称</th><th>路径</th><th>排序</th><th>状态</th><th>操作</th></tr></thead><tbody id="menuRows"></tbody></table></div>
+        </section>
+      </main>
+    </div>
+    <script src="/common.js"></script><script src="/nav.js"></script><script src="/menus.js"></script>
+  </body>
+</html>

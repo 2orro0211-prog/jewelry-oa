@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登录 - 珠宝OA</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="main" style="max-width:520px;margin:40px auto;">
+      <header class="hero">
+        <h1>珠宝 OA 登录</h1>
+        <p>请输入账号密码进入系统</p>
+      </header>
+      <section class="panel">
+        <div class="grid-4" style="grid-template-columns:1fr;">
+          <input id="username" placeholder="用户名" />
+          <input id="password" type="password" placeholder="密码" />
+        </div>
+        <div class="row mt8">
+          <button id="btnLogin">登录</button>
+          <span id="msg" class="hint"></span>
+        </div>
+        <div class="hint mt8">默认管理员账号：admin / admin123</div>
+      </section>
+    </main>
+    <script src="/common.js"></script>
+    <script src="/login.js"></script>
+  </body>
+</html>

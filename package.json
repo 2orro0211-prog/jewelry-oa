@@ -1,0 +1,11 @@
+{
+  "name": "local-oa-framework",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first OA framework skeleton for LAN use",
+  "scripts": {
+    "start": "node backend/server.js",
+    "init-db": "node backend/init-db.js",
+    "reset-admin": "node backend/reset-admin-password.js"
+  }
+}

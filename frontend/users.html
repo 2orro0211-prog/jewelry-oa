@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>用户管理 - 珠宝OA</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-page="users">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">珠宝 OA</div><div class="menu-title">菜单管理</div><div id="dynamicMenu"></div>
+        <div class="menu-title">当前用户</div><div id="currentUser" class="menu-item" style="background:#1f2937"></div>
+        <button id="btnLogout" class="menu-item" style="width:calc(100% - 8px);text-align:left;">退出登录</button>
+      </aside>
+      <main class="main">
+        <header class="hero"><h1>用户管理</h1><p>管理系统登录账号、角色和状态。</p></header>
+        <section class="panel">
+          <div class="grid-4">
+            <input id="uId" type="hidden" />
+            <input id="uUsername" placeholder="用户名" />
+            <input id="uPassword" type="password" placeholder="密码（编辑可留空）" />
+            <select id="uRole"></select>
+            <select id="uStatus"><option value="1">启用</option><option value="0">禁用</option></select>
+          </div>
+          <div class="row mt8"><button id="btnSaveUser">保存</button><button id="btnResetUser" class="btn-secondary">清空</button><span id="uMsg" class="hint"></span></div>
+        </section>
+        <section class="panel">
+          <div class="table-wrap"><table><thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="userRows"></tbody></table></div>
+        </section>
+      </main>
+    </div>
+    <script src="/common.js"></script><script src="/nav.js"></script><script src="/users.js"></script>
+  </body>
+</html>

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>本地AI - 珠宝OA</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-page="ai">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">珠宝 OA</div>
+        <div class="menu-title">菜单管理</div>
+        <div id="dynamicMenu"></div>
+        <div class="menu-title">当前用户</div>
+        <div id="currentUser" class="menu-item" style="background:#1f2937"></div>
+        <button id="btnLogout" class="menu-item" style="width:calc(100% - 8px);text-align:left;">退出登录</button>
+      </aside>
+      <main class="main">
+        <header class="hero"><h1>本地 AI 功能</h1><p>独立界面，后续可接 Ollama 本地模型。</p></header>
+        <section class="panel">
+          <div class="row"><input id="aiPrompt" placeholder="例如：按产品类型汇总数量和平均成本工费" /><button id="btnAi">查询</button></div>
+          <pre id="aiAnswer" class="box mt8"></pre>
+        </section>
+      </main>
+    </div>
+    <script src="/common.js"></script>
+    <script src="/nav.js"></script>
+    <script src="/ai.js"></script>
+  </body>
+</html>

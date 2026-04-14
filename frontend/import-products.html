@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>主表导入 - 珠宝OA</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-page="import-products">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">珠宝 OA</div>
+        <div class="menu-title">菜单管理</div>
+        <div id="dynamicMenu"></div>
+        <div class="menu-title">当前用户</div>
+        <div id="currentUser" class="menu-item" style="background:#1f2937"></div>
+        <button id="btnLogout" class="menu-item" style="width:calc(100% - 8px);text-align:left;">退出登录</button>
+      </aside>
+      <main class="main">
+        <header class="hero"><h1>主表导入</h1><p>先预览校验，再确认入库。</p></header>
+        <section class="panel">
+          <textarea id="importProductsJson" rows="12" placeholder='[{"产品编号":"P-20001","产品类型":"戒指","工厂编号":"F001","重量":2.1,"成本工费":120,"单号":"SO-1\nSO-2"}]'></textarea>
+          <div class="row mt8">
+            <button id="btnImportPreview">导入预览</button>
+            <button id="btnImportConfirm" class="btn-secondary">确认导入</button>
+            <span id="importMsg" class="hint"></span>
+          </div>
+          <pre id="importPreview" class="box"></pre>
+        </section>
+      </main>
+    </div>
+    <script src="/common.js"></script>
+    <script src="/nav.js"></script>
+    <script src="/import-products.js"></script>
+  </body>
+</html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>图片导入 - 珠宝OA</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-page="import-images">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">珠宝 OA</div>
+        <div class="menu-title">菜单管理</div>
+        <div id="dynamicMenu"></div>
+        <div class="menu-title">当前用户</div>
+        <div id="currentUser" class="menu-item" style="background:#1f2937"></div>
+        <button id="btnLogout" class="menu-item" style="width:calc(100% - 8px);text-align:left;">退出登录</button>
+      </aside>
+      <main class="main">
+        <header class="hero"><h1>图片导入</h1><p>选择本地文件夹后自动检索图片，按文件名（去后缀）关联产品编号。</p></header>
+        <section class="panel">
+          <div class="row">
+            <input id="folderInput" type="file" webkitdirectory directory multiple accept="image/*" />
+            <button id="btnScanFolder">读取文件夹</button>
+            <button id="btnImportFolderImages" class="btn-secondary">开始导入</button>
+          </div>
+          <div class="row mt8"><span id="folderMsg" class="hint"></span></div>
+          <div class="table-wrap mt8">
+            <table><thead><tr><th>文件名</th><th>自动关联产品编号</th><th>大小(KB)</th></tr></thead><tbody id="imageRows"></tbody></table>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/common.js"></script>
+    <script src="/nav.js"></script>
+    <script src="/import-images.js"></script>
+  </body>
+</html>
