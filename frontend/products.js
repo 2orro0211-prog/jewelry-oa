@@ -1,9 +1,11 @@
 const state = {
   page: 1,
-  pageSize: 15,
+  pageSize: 100,
   total: 0,
   productTypes: [],
   factories: [],
+  currentRows: [],
+  selectedIds: new Set(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -48,6 +50,83 @@ function qs(params) {
   return q.toString();
 }
 
+function updateSelectedCount() {
+  $('selectedCount').textContent = String(state.selectedIds.size);
+}
+
+function setSelected(id, checked) {
+  if (checked) state.selectedIds.add(id);
+  else state.selectedIds.delete(id);
+  updateSelectedCount();
+}
+
+function selectAllCurrentPage() {
+  for (const r of state.currentRows) state.selectedIds.add(r.id);
+  renderRows(state.currentRows);
+  updateSelectedCount();
+}
+
+function invertCurrentPage() {
+  for (const r of state.currentRows) {
+    if (state.selectedIds.has(r.id)) state.selectedIds.delete(r.id);
+    else state.selectedIds.add(r.id);
+  }
+  renderRows(state.currentRows);
+  updateSelectedCount();
+}
+
+function clearSelection() {
+  state.selectedIds.clear();
+  renderRows(state.currentRows);
+  updateSelectedCount();
+}
+
+async function copySelectedOrderNos() {
+  const selected = state.currentRows.filter((r) => state.selectedIds.has(r.id));
+  if (selected.length === 0) {
+    $('pageInfo').textContent = '请先勾选要复制单号的数据';
+    return;
+  }
+
+  const set = new Set();
+  for (const row of selected) {
+    for (const orderNo of (row.order_nos || [])) {
+      const s = String(orderNo || '').trim();
+      if (s) set.add(s);
+    }
+  }
+
+  const text = Array.from(set).join('\n');
+  if (!text) {
+    $('pageInfo').textContent = '选中数据没有可复制的单号';
+    return;
+  }
+
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      throw new Error('clipboard api unavailable');
+    }
+  } catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', 'readonly');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (!ok) {
+      $('pageInfo').textContent = '复制失败，请重试';
+      return;
+    }
+  }
+  $('pageInfo').textContent = `已复制 ${set.size} 个单号（换行）`;
+}
+
 async function loadBase() {
   const [typesRes, factoriesRes] = await Promise.all([
     apiFetch('/api/base/product-types'),
@@ -74,16 +153,20 @@ async function loadBase() {
 function renderRows(rows) {
   const tbody = $('rows');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="17" class="hint">暂无数据</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="19" class="hint">暂无数据</td></tr>';
     return;
   }
 
-  tbody.innerHTML = rows.map((r) => {
+  tbody.innerHTML = rows.map((r, idx) => {
+    const checked = state.selectedIds.has(r.id) ? 'checked' : '';
+    const serialNo = (state.page - 1) * state.pageSize + idx + 1;
     const img = r.image_path
       ? `<div class="img-cell"><img class="thumb" src="${toMedia(r.image_path)}" alt="thumb" /><div class="img-pop"><img src="${toMedia(r.image_path)}" alt="preview"/></div></div>`
       : '<span class="hint">无图</span>';
 
     return `<tr>
+      <td><input type="checkbox" data-row-check="${r.id}" ${checked} /></td>
+      <td>${serialNo}</td>
       <td>${img}</td>
       <td>${esc(r.product_code)}</td>
       <td>${esc(r.product_type || '')}</td>
@@ -106,6 +189,13 @@ function renderRows(rows) {
       </td>
     </tr>`;
   }).join('');
+
+  Array.from(document.querySelectorAll('input[data-row-check]')).forEach((el) => {
+    el.addEventListener('change', (e) => {
+      const id = Number(e.target.getAttribute('data-row-check'));
+      setSelected(id, e.target.checked);
+    });
+  });
 }
 
 function renderPageTabs() {
@@ -136,21 +226,23 @@ async function loadProducts() {
   const res = await apiFetch(`/api/products?${qs(query)}`);
   const data = await res.json();
   if (!data.ok) {
-    $('summary').textContent = '查询失败';
+    $('summary').textContent = '0';
     return;
   }
 
   state.total = data.total;
+  state.currentRows = data.rows || [];
   const max = pageCount();
   if (state.page > max) {
     state.page = max;
     return loadProducts();
   }
 
-  $('summary').textContent = `共 ${state.total} 条`;
-  $('pageInfo').textContent = `第 ${state.page}/${max} 页，本页 ${data.rows.length} 条，每页 ${state.pageSize} 条`;
-  renderRows(data.rows || []);
+  $('summary').textContent = `${state.total}`;
+  $('pageInfo').textContent = `第 ${state.page}/${max} 页，本页 ${state.currentRows.length} 条`;
+  renderRows(state.currentRows);
   renderPageTabs();
+  updateSelectedCount();
 }
 
 function openModal(title) {
@@ -257,6 +349,7 @@ window.deleteRow = async function deleteRow(id) {
   const res = await apiFetch(`/api/products/${id}`, { method: 'DELETE' });
   const data = await res.json();
   if (!data.ok) return;
+  state.selectedIds.delete(id);
   await loadProducts();
 };
 
@@ -307,12 +400,27 @@ async function bootstrap() {
   });
 
   $('pageSizeSelect').addEventListener('change', async (e) => {
-    state.pageSize = Number(e.target.value || 15);
+    let size = Number(e.target.value || state.pageSize);
+    if (!Number.isFinite(size) || size < 1) size = 100;
+    if (size > 10000) size = 10000;
+    state.pageSize = Math.trunc(size);
+    e.target.value = String(state.pageSize);
     state.page = 1;
     await loadProducts();
   });
+  $('pageSizeSelect').addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    e.target.dispatchEvent(new Event('change'));
+  });
+
+  $('btnSelectAll').addEventListener('click', selectAllCurrentPage);
+  $('btnInvertSelect').addEventListener('click', invertCurrentPage);
+  $('btnClearSelect').addEventListener('click', clearSelection);
+  $('btnCopyOrderNos').addEventListener('click', copySelectedOrderNos);
 
   await loadBase();
+  $('pageSizeSelect').value = String(state.pageSize);
   await loadProducts();
   closeModal();
 }

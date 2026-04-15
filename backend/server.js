@@ -64,7 +64,8 @@ function parseOrderNoLines(value) {
     return [...new Set(value.map((v) => String(v || '').trim()).filter(Boolean))];
   }
   if (!value) return [];
-  return [...new Set(String(value).split(/\r?\n/).map((v) => v.trim()).filter(Boolean))];
+  const text = String(value).replace(/\/n\/r|\/r\/n|\/n|\/r/gi, '\n');
+  return [...new Set(text.split(/[\r\n,，;；\s]+/).map((v) => v.trim()).filter(Boolean))];
 }
 
 function numOrNull(value) {
@@ -236,7 +237,7 @@ function getProductById(db, id) {
 
 function queryProducts(db, query) {
   const page = Math.max(Number(query.page || 1), 1);
-  const pageSize = Math.min(Math.max(Number(query.pageSize || 20), 1), 200);
+  const pageSize = Math.min(Math.max(Number(query.pageSize || 100), 1), 10000);
   const offset = (page - 1) * pageSize;
 
   const where = [];
@@ -345,7 +346,7 @@ function queryProducts(db, query) {
     LEFT JOIN base_product_type t ON t.id = p.product_type_id
     LEFT JOIN base_factory f ON f.id = p.factory_id
     ${whereSql}
-    ORDER BY p.id DESC
+    ORDER BY p.created_at DESC, p.id DESC
     LIMIT ? OFFSET ?
   `).all(...binds, pageSize, offset);
 
