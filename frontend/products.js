@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   page: 1,
   pageSize: 100,
   total: 0,
@@ -15,7 +15,9 @@ function esc(v) {
 }
 
 function toMedia(path) {
-  return path ? `/media${path}` : '';
+  if (!path) return '';
+  if (String(path).startsWith('/ext-media/')) return path;
+  return `/media${path}`;
 }
 
 function listText(v) {
@@ -84,21 +86,19 @@ function clearSelection() {
 async function copySelectedOrderNos() {
   const selected = state.currentRows.filter((r) => state.selectedIds.has(r.id));
   if (selected.length === 0) {
-    $('pageInfo').textContent = '请先勾选要复制单号的数据';
+    $('pageInfo').textContent = '请先勾选要复制编号的数据';
     return;
   }
 
   const set = new Set();
   for (const row of selected) {
-    for (const orderNo of (row.order_nos || [])) {
-      const s = String(orderNo || '').trim();
-      if (s) set.add(s);
-    }
+    const code = String(row.product_code || '').trim();
+    if (code) set.add(code);
   }
 
   const text = Array.from(set).join('\n');
   if (!text) {
-    $('pageInfo').textContent = '选中数据没有可复制的单号';
+    $('pageInfo').textContent = '选中数据没有可复制的产品编号';
     return;
   }
 
@@ -124,7 +124,58 @@ async function copySelectedOrderNos() {
       return;
     }
   }
-  $('pageInfo').textContent = `已复制 ${set.size} 个单号（换行）`;
+
+  $('pageInfo').textContent = `已复制 ${set.size} 个产品编号（换行）`;
+}
+
+function getFilenameFromDisposition(disposition) {
+  const text = String(disposition || '');
+  const utf8Match = text.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match && utf8Match[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch (_) {}
+  }
+  const plainMatch = text.match(/filename=\"?([^\";]+)\"?/i);
+  if (plainMatch && plainMatch[1]) return plainMatch[1];
+  return `products-export-${Date.now()}.xlsx`;
+}
+
+async function exportSelectedToTemplate() {
+  const ids = Array.from(state.selectedIds);
+  if (ids.length === 0) {
+    $('pageInfo').textContent = '请先勾选要导出的数据';
+    return;
+  }
+
+  $('pageInfo').textContent = `正在导出 ${ids.length} 条数据...`;
+  const res = await apiFetch('/api/products/export-template', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+
+  if (!res.ok) {
+    let msg = '导出失败';
+    try {
+      const data = await res.json();
+      msg = data.message || msg;
+    } catch (_) {}
+    $('pageInfo').textContent = msg;
+    return;
+  }
+
+  const blob = await res.blob();
+  const fileName = getFilenameFromDisposition(res.headers.get('Content-Disposition'));
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(objectUrl);
+  $('pageInfo').textContent = `已导出 ${ids.length} 条数据`;
 }
 
 async function loadBase() {
@@ -185,7 +236,7 @@ function renderRows(rows) {
       <td>${esc(r.remark || '')}</td>
       <td>
         <button class="btn-secondary" onclick="editRow(${r.id})">编辑</button>
-        <button onclick="deleteRow(${r.id})">删</button>
+        <button onclick="deleteRow(${r.id})">删除</button>
       </td>
     </tr>`;
   }).join('');
@@ -418,6 +469,7 @@ async function bootstrap() {
   $('btnInvertSelect').addEventListener('click', invertCurrentPage);
   $('btnClearSelect').addEventListener('click', clearSelection);
   $('btnCopyOrderNos').addEventListener('click', copySelectedOrderNos);
+  $('btnExportTemplate').addEventListener('click', exportSelectedToTemplate);
 
   await loadBase();
   $('pageSizeSelect').value = String(state.pageSize);
@@ -426,3 +478,4 @@ async function bootstrap() {
 }
 
 bootstrap();
+

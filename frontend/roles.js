@@ -24,8 +24,10 @@ async function loadMeta() {
   const data = await res.json();
   state.perms = data.permissions || [];
   state.menus = data.menus || [];
-  $('permChecks').innerHTML = state.perms.map((p) => `<label class="menu-item" style="background:#f8fafc;color:#111827;"><input type="checkbox" name="perm" value="${p.id}" /> ${esc(p.name)}</label>`).join('');
-  $('menuChecks').innerHTML = state.menus.map((m) => `<label class="menu-item" style="background:#f8fafc;color:#111827;"><input type="checkbox" name="menu" value="${m.id}" /> ${esc(m.name)}</label>`).join('');
+  $('permChecks').className = 'selection-grid';
+  $('menuChecks').className = 'selection-grid';
+  $('permChecks').innerHTML = state.perms.map((p) => `<label class="selection-chip"><input type="checkbox" name="perm" value="${p.id}" /> <span>${esc(p.name)}</span></label>`).join('');
+  $('menuChecks').innerHTML = state.menus.map((m) => `<label class="selection-chip"><input type="checkbox" name="menu" value="${m.id}" /> <span>${esc(m.name)}</span></label>`).join('');
 }
 
 async function loadRoles() {

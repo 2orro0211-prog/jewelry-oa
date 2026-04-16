@@ -1,8 +1,9 @@
-const http = require('http');
+﻿const http = require('http');
 const url = require('url');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const ExcelJS = require('exceljs');
 const { getDb } = require('./db');
 
 const HOST = process.env.HOST || '0.0.0.0';
@@ -10,6 +11,9 @@ const PORT = Number(process.env.PORT || 8080);
 const FRONTEND_DIR = path.join(__dirname, '..', 'frontend');
 const STORAGE_DIR = path.join(__dirname, '..', 'storage');
 const PRODUCT_IMAGE_DIR = path.join(STORAGE_DIR, 'images', 'products');
+const EXTERNAL_PRODUCT_IMAGE_DIR = process.env.EXTERNAL_PRODUCT_IMAGE_DIR || 'D:\\Jew\\ProductImage';
+const EXPORT_TEMPLATE_XLSX = process.env.EXPORT_TEMPLATE_XLSX || 'C:\\Users\\87511\\Desktop\\导出模板.xlsx';
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.bmp'];
 
 fs.mkdirSync(PRODUCT_IMAGE_DIR, { recursive: true });
 
@@ -56,18 +60,18 @@ function parseList(value) {
   }
   if (!value) return [];
   const text = String(value);
-  return [...new Set(text.split(/[\s,，;；]+/).map((v) => v.trim()).filter(Boolean))];
+  return [...new Set(text.split(/[\s,，、;；]+/).map((v) => v.trim()).filter(Boolean))];
 }
-
 function parseOrderNoLines(value) {
   if (Array.isArray(value)) {
     return [...new Set(value.map((v) => String(v || '').trim()).filter(Boolean))];
   }
   if (!value) return [];
-  const text = String(value).replace(/\/n\/r|\/r\/n|\/n|\/r/gi, '\n');
-  return [...new Set(text.split(/[\r\n,，;；\s]+/).map((v) => v.trim()).filter(Boolean))];
+  const text = String(value)
+    .replace(/\\n\\r|\\r\\n|\\n|\\r/gi, '\n')
+    .replace(/\r\n/g, '\n');
+  return [...new Set(text.split(/[\r\n,，、\s]+/).map((v) => v.trim()).filter(Boolean))];
 }
-
 function numOrNull(value) {
   if (value === undefined || value === null || value === '') return null;
   const n = Number(value);
@@ -156,39 +160,299 @@ function getBaseMaps(db) {
   return {
     typeByName: Object.fromEntries(typeRows.map((r) => [r.name, r.id])),
     factoryByCode: Object.fromEntries(factoryRows.map((r) => [r.code, r.id])),
+    factoryByName: Object.fromEntries(factoryRows.map((r) => [r.name, r.id])),
   };
 }
 
+function normalizeFieldKey(key) {
+  return String(key || '')
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_\-\/\\\[\](){}<>:：,，.;；|"'`~!@#$%^&*+=?]+/g, '');
+}
+
+function createFieldGetter(raw) {
+  const normMap = new Map();
+  for (const [k, v] of Object.entries(raw || {})) {
+    normMap.set(normalizeFieldKey(k), v);
+  }
+
+  return function getField(...aliases) {
+    for (const key of aliases) {
+      if (Object.prototype.hasOwnProperty.call(raw, key)) return raw[key];
+      const byNorm = normMap.get(normalizeFieldKey(key));
+      if (byNorm !== undefined) return byNorm;
+    }
+    return undefined;
+  };
+}
+
+let externalImageIndexCache = {
+  loadedAt: 0,
+  byCodeLower: new Map(),
+};
+
+function loadExternalImageIndex() {
+  const now = Date.now();
+  if (now - externalImageIndexCache.loadedAt < 5000) {
+    return externalImageIndexCache.byCodeLower;
+  }
+
+  const byCodeLower = new Map();
+  if (fs.existsSync(EXTERNAL_PRODUCT_IMAGE_DIR)) {
+    const entries = fs.readdirSync(EXTERNAL_PRODUCT_IMAGE_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const ext = path.extname(entry.name).toLowerCase();
+      if (!IMAGE_EXTENSIONS.includes(ext)) continue;
+      const base = path.basename(entry.name, ext).trim().toLowerCase();
+      if (!base || byCodeLower.has(base)) continue;
+      byCodeLower.set(base, entry.name);
+    }
+  }
+
+  externalImageIndexCache = {
+    loadedAt: now,
+    byCodeLower,
+  };
+  return byCodeLower;
+}
+
+function findExternalImagePathByProductCode(productCode) {
+  const code = String(productCode || '').trim();
+  if (!code) return null;
+  const index = loadExternalImageIndex();
+  const fileName = index.get(code.toLowerCase());
+  if (!fileName) return null;
+  return `/ext-media/products/${encodeURIComponent(fileName)}`;
+}
+
+function fillFallbackImagePath(row) {
+  if (!row || row.image_path) return row;
+  const fallback = findExternalImagePathByProductCode(row.product_code);
+  if (fallback) row.image_path = fallback;
+  return row;
+}
+
+function resolveImageFilePath(imagePath) {
+  const p = String(imagePath || '').trim();
+  if (!p) return null;
+  if (p.startsWith('/ext-media/products/')) {
+    const fileName = decodeURIComponent(p.slice('/ext-media/products/'.length));
+    return path.join(EXTERNAL_PRODUCT_IMAGE_DIR, path.basename(fileName));
+  }
+  if (p.startsWith('/images/products/')) {
+    const fileName = decodeURIComponent(p.slice('/images/products/'.length));
+    return path.join(PRODUCT_IMAGE_DIR, path.basename(fileName));
+  }
+  if (p.startsWith('/images/')) {
+    const fileName = decodeURIComponent(p.slice('/images/'.length));
+    return path.join(STORAGE_DIR, 'images', path.basename(fileName));
+  }
+  return null;
+}
+
+function getProductsForExport(db, ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return [];
+  const cleanIds = [...new Set(ids.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0))];
+  if (cleanIds.length === 0) return [];
+
+  const placeholders = cleanIds.map(() => '?').join(',');
+  const rows = db.prepare(`
+    SELECT
+      p.id,
+      p.product_code,
+      p.weight,
+      p.small_stone_count,
+      p.odd_stone_count,
+      p.main_stone_price,
+      p.blank_price,
+      p.plating_fee,
+      p.labor_cost,
+      p.plating_color,
+      p.remark,
+      t.name AS product_type,
+      f.code AS factory_code,
+      (
+        SELECT image_path FROM product_image pi
+        WHERE pi.product_id = p.id
+        ORDER BY pi.updated_at DESC, pi.id DESC
+        LIMIT 1
+      ) AS image_path,
+      (
+        SELECT GROUP_CONCAT(order_no, ',') FROM product_order po
+        WHERE po.product_id = p.id
+      ) AS order_nos,
+      (
+        SELECT GROUP_CONCAT(tag, ',') FROM product_tag pt
+        WHERE pt.product_id = p.id
+      ) AS tags
+    FROM product p
+    LEFT JOIN base_product_type t ON t.id = p.product_type_id
+    LEFT JOIN base_factory f ON f.id = p.factory_id
+    WHERE p.id IN (${placeholders})
+  `).all(...cleanIds);
+
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const orderedRows = [];
+  for (const id of cleanIds) {
+    const r = byId.get(id);
+    if (!r) continue;
+    fillFallbackImagePath(r);
+    r.order_nos = r.order_nos ? r.order_nos.split(',') : [];
+    r.tags = r.tags ? r.tags.split(',') : [];
+    orderedRows.push(r);
+  }
+  return orderedRows;
+}
+
+function deepCloneStyle(style) {
+  if (!style) return {};
+  return JSON.parse(JSON.stringify(style));
+}
+
+function copyRowStyle(ws, srcRowNo, dstRowNo, maxCol = 17) {
+  for (let col = 1; col <= maxCol; col += 1) {
+    const src = ws.getCell(srcRowNo, col);
+    const dst = ws.getCell(dstRowNo, col);
+    dst.style = deepCloneStyle(src.style);
+  }
+  const srcRow = ws.getRow(srcRowNo);
+  const dstRow = ws.getRow(dstRowNo);
+  dstRow.height = srcRow.height;
+}
+
+function toExcelImageExtension(filePath) {
+  const ext = path.extname(filePath || '').toLowerCase();
+  if (ext === '.png') return 'png';
+  if (ext === '.jpg' || ext === '.jpeg') return 'jpeg';
+  if (ext === '.webp') return 'png';
+  if (ext === '.bmp') return 'png';
+  return null;
+}
+
+async function buildExportWorkbookBuffer(rows) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(EXPORT_TEMPLATE_XLSX);
+  const ws = workbook.getWorksheet(1);
+  const targetRowHeightPt = 128;
+  // ExcelJS column width unit is not points; this value approximates ~128pt visual width.
+  const pictureColumnWidth = 24;
+  const imageSizePx = 166;
+  const imagePaddingPx = 2;
+
+  const dataStartRow = 9;
+  const templateDataRows = 4;
+  const baseStyleRow = 12;
+  let summaryRow = 13;
+  let summaryTotalRow = 14;
+
+  const count = rows.length;
+  const extra = Math.max(0, count - templateDataRows);
+  if (extra > 0) {
+    const blanks = Array.from({ length: extra }, () => []);
+    ws.spliceRows(summaryRow, 0, ...blanks);
+    for (let i = 1; i <= extra; i += 1) {
+      copyRowStyle(ws, baseStyleRow, baseStyleRow + i);
+    }
+    summaryRow += extra;
+    summaryTotalRow += extra;
+  }
+
+  ws.getColumn(2).width = pictureColumnWidth;
+
+  for (let i = 0; i < rows.length; i += 1) {
+    const r = rows[i];
+    const rr = dataStartRow + i;
+    ws.getCell(rr, 1).value = i + 1;
+    ws.getCell(rr, 3).value = r.product_code || '';
+    ws.getCell(rr, 4).value = '';
+    ws.getCell(rr, 5).value = r.plating_color || '';
+    ws.getCell(rr, 6).value = 1;
+    ws.getCell(rr, 7).value = Number(r.weight || 0);
+    ws.getCell(rr, 8).value = { formula: `F${rr}*G${rr}` };
+    ws.getCell(rr, 9).value = Number(r.main_stone_price || 0);
+    ws.getCell(rr, 10).value = Number(r.labor_cost || 0);
+    ws.getCell(rr, 11).value = Number(r.blank_price || 0);
+    ws.getCell(rr, 12).value = { formula: `F${rr}*K${rr}` };
+    ws.getCell(rr, 13).value = r.factory_code || '';
+    ws.getCell(rr, 14).value = Number(r.small_stone_count || 0);
+    ws.getCell(rr, 15).value = (r.tags || []).join(', ');
+    ws.getCell(rr, 17).value = r.plating_color || (r.plating_fee ? String(r.plating_fee) : '');
+
+    const imageFilePath = resolveImageFilePath(r.image_path);
+    if (imageFilePath && fs.existsSync(imageFilePath)) {
+      const ext = toExcelImageExtension(imageFilePath);
+      if (ext) {
+        try {
+          const imageId = workbook.addImage({ filename: imageFilePath, extension: ext });
+          ws.addImage(imageId, {
+            tl: { col: 1 + imagePaddingPx / imageSizePx, row: rr - 1 + imagePaddingPx / imageSizePx },
+            ext: { width: imageSizePx, height: imageSizePx },
+          });
+          ws.getRow(rr).height = targetRowHeightPt;
+        } catch (_) {}
+      }
+    }
+    ws.getRow(rr).height = targetRowHeightPt;
+  }
+
+  if (count < templateDataRows) {
+    for (let rr = dataStartRow + count; rr < dataStartRow + templateDataRows; rr += 1) {
+      for (const cc of [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17]) {
+        ws.getCell(rr, cc).value = null;
+      }
+    }
+  }
+
+  const dataEndRow = dataStartRow + count - 1;
+  ws.getCell(summaryRow, 1).value = 'Items';
+  ws.getCell(summaryRow, 3).value = 'Quantity';
+  ws.getCell(summaryRow, 6).value = 'Total Weight';
+  ws.getCell(summaryRow, 9).value = 'Total Amount';
+  ws.getCell(summaryRow, 11).value = { formula: `SUM(L${dataStartRow}:L${dataEndRow})` };
+  ws.getCell(summaryTotalRow, 1).value = { formula: `COUNT(A${dataStartRow}:A${dataEndRow})` };
+  ws.getCell(summaryTotalRow, 3).value = { formula: `SUM(F${dataStartRow}:F${dataEndRow})` };
+  ws.getCell(summaryTotalRow, 6).value = { formula: `SUM(H${dataStartRow}:H${dataEndRow})` };
+
+  const buf = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buf);
+}
+
 function normalizeProductPayload(raw, maps) {
-  const productCode = String(raw.product_code ?? raw['产品编号'] ?? '').trim();
-  const productTypeName = String(raw.product_type ?? raw['产品类型'] ?? '').trim();
-  const factoryCode = String(raw.factory_code ?? raw['工厂编号'] ?? '').trim();
+  const getField = createFieldGetter(raw || {});
+  const productCode = String(getField('product_code', 'productCode', '产品编号', '产品编码', '货号', '款号', '编码', 'sku', 'SKU', 'sku编码', '浜у搧缂栧彿') ?? '').trim();
+  const productTypeName = String(getField('product_type', 'productType', '产品类型', '品类', '类别', '浜у搧绫诲瀷') ?? '').trim();
+  const factoryCode = String(getField('factory_code', 'factoryCode', '工厂编号', '工厂代码', '工厂', '工厂名称', '供应商编号', '宸ュ巶缂栧彿') ?? '').trim();
 
   const payload = {
     product_code: productCode,
-    product_type_id: intOrNull(raw.product_type_id),
-    factory_id: intOrNull(raw.factory_id),
-    weight: numOrNull(raw.weight ?? raw['重量']) ?? 0,
-    small_stone_count: intOrNull(raw.small_stone_count ?? raw['细石数']) ?? 0,
-    odd_stone_count: intOrNull(raw.odd_stone_count ?? raw['异形石数']) ?? 0,
-    main_stone_count: intOrNull(raw.main_stone_count ?? raw['主石数']) ?? 0,
-    main_stone_price: numOrNull(raw.main_stone_price ?? raw['主石价'] ?? raw['主石价格']) ?? 0,
-    blank_price: numOrNull(raw.blank_price ?? raw['胚价']) ?? 0,
-    plating_fee: numOrNull(raw.plating_fee ?? raw['电镀费']) ?? 0,
-    labor_cost: numOrNull(raw.labor_cost ?? raw['成本工费'] ?? raw['成本']) ?? 0,
-    plating_color: String(raw.plating_color ?? raw['电镀颜色'] ?? '').trim() || null,
-    remark: String(raw.remark ?? raw['备注'] ?? '').trim() || null,
-    order_nos: parseOrderNoLines(raw.order_nos ?? raw['单号']),
-    tags: parseList(raw.tags ?? raw['标签']),
+    product_type_id: intOrNull(getField('product_type_id', 'productTypeId', '产品类型ID')),
+    factory_id: intOrNull(getField('factory_id', 'factoryId', '工厂ID')),
+    weight: numOrNull(getField('weight', 'netWeight', 'grossWeight', '重量', '克重', '净重', '閲嶉噺')) ?? 0,
+    small_stone_count: intOrNull(getField('small_stone_count', 'smallStoneCount', '细石数', '副石数', '配石数', '缁嗙煶鏁?')) ?? 0,
+    odd_stone_count: intOrNull(getField('odd_stone_count', 'oddStoneCount', '异形石数', '方石数', '寮傚舰鐭虫暟')) ?? 0,
+    main_stone_count: intOrNull(getField('main_stone_count', 'mainStoneCount', '主石数', '涓荤煶鏁?')) ?? 0,
+    main_stone_price: numOrNull(getField('main_stone_price', 'mainStonePrice', '主石价', '主石价格', '银价', '涓荤煶浠?', '涓荤煶浠锋牸')) ?? 0,
+    blank_price: numOrNull(getField('blank_price', 'blankPrice', '胚', '胚价', '鑳氫环')) ?? 0,
+    plating_fee: numOrNull(getField('plating_fee', 'platingFee', '电镀', '电镀费', '鐢甸晙璐?')) ?? 0,
+    labor_cost: numOrNull(getField('labor_cost', 'laborCost', '成本工费', '工费', '成本', '鎴愭湰宸ヨ垂', '鎴愭湰')) ?? 0,
+    plating_color: String(getField('plating_color', 'platingColor', '电镀颜色', '颜色', '鐢甸晙棰滆壊') ?? '').trim() || null,
+    remark: String(getField('remark', '备注', '说明', '澶囨敞') ?? '').trim() || null,
+    order_nos: parseOrderNoLines(getField('order_nos', 'orderNos', '单号', '订单号', '鍗曞彿')),
+    tags: parseList(getField('tags', '标签', '鏍囩')),
   };
 
   if (!payload.product_type_id && productTypeName) payload.product_type_id = maps.typeByName[productTypeName] || null;
-  if (!payload.factory_id && factoryCode) payload.factory_id = maps.factoryByCode[factoryCode] || null;
+  if (!payload.factory_id && factoryCode) {
+    payload.factory_id = maps.factoryByCode[factoryCode] || maps.factoryByName[factoryCode] || null;
+  }
 
   const errors = [];
-  if (!payload.product_code) errors.push('产品编号不能为空');
-  if (productTypeName && !payload.product_type_id) errors.push(`产品类型不存在: ${productTypeName}`);
-  if (factoryCode && !payload.factory_id) errors.push(`工厂编号不存在: ${factoryCode}`);
+  if (!payload.product_code) errors.push('浜у搧缂栧彿涓嶈兘涓虹┖');
+  if (productTypeName && !payload.product_type_id) errors.push(`浜у搧绫诲瀷涓嶅瓨鍦? ${productTypeName}`);
+  if (factoryCode && !payload.factory_id) errors.push(`宸ュ巶缂栧彿涓嶅瓨鍦? ${factoryCode}`);
 
   return { payload, errors };
 }
@@ -232,7 +496,7 @@ function getProductById(db, id) {
   if (!row) return null;
   row.order_nos = row.order_nos ? row.order_nos.split(',') : [];
   row.tags = row.tags ? row.tags.split(',') : [];
-  return row;
+  return fillFallbackImagePath(row);
 }
 
 function queryProducts(db, query) {
@@ -252,8 +516,14 @@ function queryProducts(db, query) {
   const orderNos = parseOrderNoLines(query.orderNos);
   if (orderNos.length > 0) {
     const placeholders = orderNos.map(() => '?').join(',');
-    where.push(`EXISTS (SELECT 1 FROM product_order po WHERE po.product_id = p.id AND po.order_no IN (${placeholders}))`);
-    binds.push(...orderNos);
+    where.push(`(
+      p.product_code IN (${placeholders})
+      OR EXISTS (
+        SELECT 1 FROM product_order po
+        WHERE po.product_id = p.id AND po.order_no IN (${placeholders})
+      )
+    )`);
+    binds.push(...orderNos, ...orderNos);
   }
 
   const productTypeId = intOrNull(query.productTypeId);
@@ -353,13 +623,14 @@ function queryProducts(db, query) {
   for (const r of rows) {
     r.order_nos = r.order_nos ? r.order_nos.split(',') : [];
     r.tags = r.tags ? r.tags.split(',') : [];
+    fillFallbackImagePath(r);
   }
 
   return { page, pageSize, total, rows };
 }
 
 function ensureImageWrite(imageName, imageBase64) {
-  if (!imageBase64) throw new Error('image_base64 不能为空');
+  if (!imageBase64) throw new Error('image_base64 涓嶈兘涓虹┖');
   const safeName = path.basename(String(imageName || '').trim() || `image-${Date.now()}.png`);
   const targetPath = path.join(PRODUCT_IMAGE_DIR, safeName);
 
@@ -379,6 +650,46 @@ function ensureImageWrite(imageName, imageBase64) {
   };
 }
 
+function serveExternalProductImage(reqPath, res) {
+  const prefix = '/ext-media/products/';
+  if (!reqPath.startsWith(prefix)) {
+    sendText(res, 404, 'Media Not Found');
+    return;
+  }
+
+  if (!fs.existsSync(EXTERNAL_PRODUCT_IMAGE_DIR)) {
+    sendText(res, 404, 'Media Not Found');
+    return;
+  }
+
+  const encodedFileName = reqPath.slice(prefix.length);
+  const safeName = path.basename(decodeURIComponent(encodedFileName));
+  if (!safeName) {
+    sendText(res, 404, 'Media Not Found');
+    return;
+  }
+
+  const ext = path.extname(safeName).toLowerCase();
+  if (!IMAGE_EXTENSIONS.includes(ext)) {
+    sendText(res, 403, 'Forbidden');
+    return;
+  }
+
+  const filePath = path.join(EXTERNAL_PRODUCT_IMAGE_DIR, safeName);
+  fs.readFile(filePath, (err, data) => {
+    if (err) return sendText(res, 404, 'Media Not Found');
+    const contentType = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.webp': 'image/webp',
+      '.bmp': 'image/bmp',
+    }[ext] || 'application/octet-stream';
+    res.writeHead(200, { 'Content-Type': contentType });
+    res.end(data);
+  });
+}
+
 async function handleAiQuery(prompt) {
   if (!prompt) return { ok: false, answer: '请输入问题。' };
 
@@ -390,13 +701,13 @@ async function handleAiQuery(prompt) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
-        prompt: `你是珠宝OA本地助手，请根据本地业务场景回答。问题：${prompt}`,
+        prompt: `浣犳槸鐝犲疂OA鏈湴鍔╂墜锛岃鏍规嵁鏈湴涓氬姟鍦烘櫙鍥炵瓟銆傞棶棰橈細${prompt}`,
         stream: false,
       }),
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    return { ok: true, answer: data.response || '模型无返回', provider: 'ollama' };
+    return { ok: true, answer: data.response || '模型无返回。', provider: 'ollama' };
   } catch (_) {
     return {
       ok: true,
@@ -427,7 +738,7 @@ function getUserByToken(db, token) {
 
 function requireAdminOrThrow(currentUser) {
   if (!isAdmin(currentUser)) {
-    const err = new Error('需要管理员权限');
+    const err = new Error('闇€瑕佺鐞嗗憳鏉冮檺');
     err.statusCode = 403;
     throw err;
   }
@@ -474,7 +785,7 @@ const server = http.createServer(async (req, res) => {
       const username = String(body.username || '').trim();
       const password = String(body.password || '');
       if (!username || !password) {
-        sendJson(res, 400, { ok: false, message: '用户名和密码不能为空' });
+        sendJson(res, 400, { ok: false, message: '鐢ㄦ埛鍚嶅拰瀵嗙爜涓嶈兘涓虹┖' });
         return;
       }
 
@@ -496,7 +807,7 @@ const server = http.createServer(async (req, res) => {
       const passHash = hashPassword(password, user.password_salt);
       if (passHash !== user.password_hash) {
         db.close();
-        sendJson(res, 401, { ok: false, message: '用户名或密码错误' });
+        sendJson(res, 401, { ok: false, message: '鐢ㄦ埛鍚嶆垨瀵嗙爜閿欒' });
         return;
       }
 
@@ -612,6 +923,42 @@ const server = http.createServer(async (req, res) => {
       const result = queryProducts(db, parsed.query || {});
       db.close();
       sendJson(res, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (pathname === '/api/products/export-template' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const ids = Array.isArray(body.ids) ? body.ids : [];
+      const cleanIds = [...new Set(ids.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0))];
+      if (cleanIds.length === 0) {
+        sendJson(res, 400, { ok: false, message: '请先选择要导出的数据' });
+        return;
+      }
+
+      if (!fs.existsSync(EXPORT_TEMPLATE_XLSX)) {
+        sendJson(res, 500, { ok: false, message: `导出模板不存在: ${EXPORT_TEMPLATE_XLSX}` });
+        return;
+      }
+
+      const db = getDb();
+      const rows = getProductsForExport(db, cleanIds);
+      db.close();
+      if (rows.length === 0) {
+        sendJson(res, 404, { ok: false, message: '未找到可导出的产品数据' });
+        return;
+      }
+
+      try {
+        const outputFileName = `products-export-${new Date().toISOString().slice(0, 10)}-${Date.now()}.xlsx`;
+        const buf = await buildExportWorkbookBuffer(rows);
+        res.writeHead(200, {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Disposition': `attachment; filename=\"products-export.xlsx\"; filename*=UTF-8''${encodeURIComponent(outputFileName)}`,
+        });
+        res.end(buf);
+      } catch (err) {
+        sendJson(res, 500, { ok: false, message: err.message || '导出失败' });
+      }
       return;
     }
 
@@ -749,7 +1096,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/import/products/preview' && req.method === 'POST') {
       const body = await parseBody(req);
       const rows = Array.isArray(body.rows) ? body.rows : [];
-      if (rows.length === 0) return sendJson(res, 400, { ok: false, message: '导入数据为空' });
+      if (rows.length === 0) return sendJson(res, 400, { ok: false, message: '瀵煎叆鏁版嵁涓虹┖' });
 
       const db = getDb();
       const maps = getBaseMaps(db);
@@ -814,7 +1161,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/import/products/confirm' && req.method === 'POST') {
       const body = await parseBody(req);
       const batchId = Number(body.batch_id || 0);
-      if (!batchId) return sendJson(res, 400, { ok: false, message: 'batch_id 无效' });
+      if (!batchId) return sendJson(res, 400, { ok: false, message: 'batch_id 鏃犳晥' });
 
       const db = getDb();
       const batch = db.prepare('SELECT * FROM import_batch WHERE id = ?').get(batchId);
@@ -824,7 +1171,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (batch.status === 'confirmed') {
         db.close();
-        return sendJson(res, 400, { ok: false, message: '该批次已确认导入' });
+        return sendJson(res, 400, { ok: false, message: '璇ユ壒娆″凡纭瀵煎叆' });
       }
 
       const rows = db.prepare(`
@@ -896,7 +1243,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/import/images' && req.method === 'POST') {
       const body = await parseBody(req);
       const rows = Array.isArray(body.rows) ? body.rows : [];
-      if (rows.length === 0) return sendJson(res, 400, { ok: false, message: '图片导入数据为空' });
+      if (rows.length === 0) return sendJson(res, 400, { ok: false, message: '鍥剧墖瀵煎叆鏁版嵁涓虹┖' });
 
       const db = getDb();
       const upsertImage = db.prepare(`
@@ -913,18 +1260,18 @@ const server = http.createServer(async (req, res) => {
       try {
         for (let i = 0; i < rows.length; i += 1) {
           const r = rows[i] || {};
-          const productCode = String(r.product_code || r['产品编号'] || '').trim();
+          const productCode = String(r.product_code || r['浜у搧缂栧彿'] || '').trim();
           const imageName = String(r.image_name || r['图片名'] || '').trim() || `${productCode}.png`;
           const imageBase64 = String(r.image_base64 || '').trim();
 
           if (!productCode) {
-            errors.push({ index: i, message: '产品编号为空' });
+            errors.push({ index: i, message: '浜у搧缂栧彿涓虹┖' });
             continue;
           }
 
           const product = db.prepare('SELECT id FROM product WHERE product_code = ?').get(productCode);
           if (!product) {
-            errors.push({ index: i, message: `产品不存在: ${productCode}` });
+            errors.push({ index: i, message: `浜у搧涓嶅瓨鍦? ${productCode}` });
             continue;
           }
 
@@ -982,7 +1329,7 @@ const server = http.createServer(async (req, res) => {
       const roleId = Number(body.role_id || 0);
       const status = Number(body.status ?? 1) ? 1 : 0;
       if (!username || !password || !roleId) {
-        sendJson(res, 400, { ok: false, message: 'username/password/role_id 必填' });
+        sendJson(res, 400, { ok: false, message: 'username/password/role_id 蹇呭～' });
         return;
       }
 
@@ -1008,7 +1355,7 @@ const server = http.createServer(async (req, res) => {
       const status = Number(body.status ?? 1) ? 1 : 0;
       const password = String(body.password || '').trim();
       if (!username || !roleId) {
-        sendJson(res, 400, { ok: false, message: 'username/role_id 必填' });
+        sendJson(res, 400, { ok: false, message: 'username/role_id 蹇呭～' });
         return;
       }
 
@@ -1043,7 +1390,7 @@ const server = http.createServer(async (req, res) => {
       requireAdminOrThrow(currentUser);
       const userId = Number(userIdMatch[1]);
       if (userId === currentUser.id) {
-        sendJson(res, 400, { ok: false, message: '不能删除当前登录用户' });
+        sendJson(res, 400, { ok: false, message: '涓嶈兘鍒犻櫎褰撳墠鐧诲綍鐢ㄦ埛' });
         return;
       }
       const db = getDb();
@@ -1076,7 +1423,7 @@ const server = http.createServer(async (req, res) => {
       const name = String(body.name || '').trim();
       const remark = String(body.remark || '').trim() || null;
       if (!code || !name) {
-        sendJson(res, 400, { ok: false, message: 'code/name 必填' });
+        sendJson(res, 400, { ok: false, message: 'code/name 蹇呭～' });
         return;
       }
 
@@ -1098,7 +1445,7 @@ const server = http.createServer(async (req, res) => {
       const permissionIds = Array.isArray(body.permission_ids) ? body.permission_ids.map(Number).filter(Boolean) : [];
       const menuIds = Array.isArray(body.menu_item_ids) ? body.menu_item_ids.map(Number).filter(Boolean) : [];
       if (!code || !name) {
-        sendJson(res, 400, { ok: false, message: 'code/name 必填' });
+        sendJson(res, 400, { ok: false, message: 'code/name 蹇呭～' });
         return;
       }
 
@@ -1157,7 +1504,7 @@ const server = http.createServer(async (req, res) => {
       const name = String(body.name || '').trim();
       const remark = String(body.remark || '').trim() || null;
       if (!code || !name) {
-        sendJson(res, 400, { ok: false, message: 'code/name 必填' });
+        sendJson(res, 400, { ok: false, message: 'code/name 蹇呭～' });
         return;
       }
 
@@ -1177,7 +1524,7 @@ const server = http.createServer(async (req, res) => {
       const name = String(body.name || '').trim();
       const remark = String(body.remark || '').trim() || null;
       if (!code || !name) {
-        sendJson(res, 400, { ok: false, message: 'code/name 必填' });
+        sendJson(res, 400, { ok: false, message: 'code/name 蹇呭～' });
         return;
       }
 
@@ -1213,11 +1560,11 @@ const server = http.createServer(async (req, res) => {
       const key = String(body.key || '').trim();
       const name = String(body.name || '').trim();
       const menuPath = String(body.path || '').trim();
-      const groupName = String(body.group_name || '业务功能').trim() || '业务功能';
+      const groupName = String(body.group_name || '涓氬姟鍔熻兘').trim() || '涓氬姟鍔熻兘';
       const sortNo = Number(body.sort_no || 100);
       const isEnabled = Number(body.is_enabled ?? 1) ? 1 : 0;
       if (!key || !name || !menuPath) {
-        sendJson(res, 400, { ok: false, message: 'key/name/path 必填' });
+        sendJson(res, 400, { ok: false, message: 'key/name/path 蹇呭～' });
         return;
       }
       const db = getDb();
@@ -1235,11 +1582,11 @@ const server = http.createServer(async (req, res) => {
       const key = String(body.key || '').trim();
       const name = String(body.name || '').trim();
       const menuPath = String(body.path || '').trim();
-      const groupName = String(body.group_name || '业务功能').trim() || '业务功能';
+      const groupName = String(body.group_name || '涓氬姟鍔熻兘').trim() || '涓氬姟鍔熻兘';
       const sortNo = Number(body.sort_no || 100);
       const isEnabled = Number(body.is_enabled ?? 1) ? 1 : 0;
       if (!key || !name || !menuPath) {
-        sendJson(res, 400, { ok: false, message: 'key/name/path 必填' });
+        sendJson(res, 400, { ok: false, message: 'key/name/path 蹇呭～' });
         return;
       }
       const db = getDb();
@@ -1265,7 +1612,7 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       const items = Array.isArray(body.items) ? body.items : [];
       if (items.length === 0) {
-        sendJson(res, 400, { ok: false, message: 'items 不能为空' });
+        sendJson(res, 400, { ok: false, message: 'items 涓嶈兘涓虹┖' });
         return;
       }
 
@@ -1275,7 +1622,7 @@ const server = http.createServer(async (req, res) => {
         const upd = db.prepare('UPDATE menu_item SET group_name = ?, sort_no = ? WHERE id = ?');
         for (const it of items) {
           const id = Number(it.id || 0);
-          const groupName = String(it.group_name || '业务功能').trim() || '业务功能';
+          const groupName = String(it.group_name || '涓氬姟鍔熻兘').trim() || '涓氬姟鍔熻兘';
           const sortNo = Number(it.sort_no || 0);
           if (!id) continue;
           upd.run(groupName, sortNo, id);
@@ -1303,6 +1650,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (pathname.startsWith('/ext-media/products/')) {
+      serveExternalProductImage(pathname, res);
+      return;
+    }
+
     if (pathname.startsWith('/media/')) {
       serveMediaFile(pathname, res);
       return;
@@ -1318,3 +1670,4 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`Local OA server running at http://${HOST}:${PORT}`);
 });
+
